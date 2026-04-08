@@ -62,3 +62,7 @@ ddsp-piano-pytorch/
 ytsrt66589-ddsp-piano-pytorch/
 external_repos/
 third_party/
+
+PARITY_MANIFEST.md
+PARITY_REPORT.md
+PARITY_TOLERANCES.md
