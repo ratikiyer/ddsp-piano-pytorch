@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test/cache/tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Training/eval outputs
+checkpoints/
+runs/
+logs/
+**/phase_*/ckpts/
+**/phase_*/logs/
+**/last_iter.pt
+**/best_iter.pt
+*.pt
+*.ckpt
+
+# Generated media/data artifacts
+*.wav
+*.flac
+*.mp3
+*.npy
+*.npz
+*.tfrecord
+
+# Local advisor smoke artifacts (keep only the guide doc)
+advisor_evidence/*
+!advisor_evidence/ADVISOR_PROOF_PACK.md
+
+# Environment lock/cache
+.python-version
+
+# Prevent accidental inclusion of external cloned repos
+ddsp-piano/
+ddsp_pytorch/
+ddsp-piano-pytorch/
+ytsrt66589-ddsp-piano-pytorch/
+external_repos/
+third_party/

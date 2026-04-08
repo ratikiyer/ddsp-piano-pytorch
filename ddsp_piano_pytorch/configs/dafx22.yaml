@@ -1,0 +1,28 @@
+model:
+  n_synths: 16
+  n_harmonics: 96
+  n_noise_bands: 65
+  sample_rate: 24000
+  frame_rate: 250
+  context_dim: 64
+  z_encoder:
+    class: OneHotZEncoder
+    n_instruments: 10
+    z_dim: 16
+  context_network:
+    class: SimpleContextNet
+    hidden_dim: 128
+    context_dim: 64
+  monophonic_network:
+    class: MonophonicNetwork
+    hidden_dim: 192
+training:
+  manifest: maestro_train_manifest.csv
+  batch_size: 4
+  learning_rate: 3.0e-4
+  duration: 3.0
+  epochs: 10
+  phase1_epochs: 5
+  phase2_epochs: 5
+  checkpoint_dir: checkpoints/dafx22
+  log_dir: runs/dafx22
