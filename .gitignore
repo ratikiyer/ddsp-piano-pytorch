@@ -49,9 +49,8 @@ logs/
 *.npz
 *.tfrecord
 
-# Local advisor smoke artifacts (keep only the guide doc)
+# Local advisor/intermediate artifacts
 advisor_evidence/*
-!advisor_evidence/ADVISOR_PROOF_PACK.md
 
 # Environment lock/cache
 .python-version
