@@ -1,28 +1,45 @@
 model:
+  n_instruments: 10
   n_synths: 16
-  n_harmonics: 96
-  n_noise_bands: 65
+  n_harmonics: 128
+  n_noise_bands: 96
   sample_rate: 24000
   frame_rate: 250
-  context_dim: 128
+  context_dim: 32
   z_encoder:
     class: OneHotZEncoder
     n_instruments: 10
     z_dim: 16
-    n_inharm_params: 1
-    n_detuning_params: 1
+  note_release:
+    class: NoteRelease
+    frame_rate: 250
+  parallelizer:
+    class: Parallelizer
+    n_synths: 16
+    global_keys: ["conditioning", "context", "piano_model"]
   context_network:
     class: FiLMContextNetwork
-    layer_dim: 512
-    context_dim: 128
+    n_instruments: 10
+    layer_dim: 64
+    context_dim: 32
+  inharm_model:
+    class: JointParametricInharmTuning
+    n_instruments: 10
   reverb_model:
     class: MultiInstrumentFeedbackDelayReverb
+    n_instruments: 10
+    sample_rate: 24000
     fdn_n_delays: 8
     early_ir_length: 200
   monophonic_network:
     class: MonophonicDeepNetwork
-    rnn_channels: 512
-    ch: 128
+    rnn_channels: 192
+    ch: 64
+  background_noise_model:
+    class: BackgroundNoiseFilter
+    n_instruments: 10
+    n_filters: 96
+    frame_rate: 250
 training:
   manifest: maestro_train_manifest.csv
   batch_size: 4
@@ -35,8 +52,8 @@ training:
   grad_clip: 1.0
   fft_sizes: [2048, 1024, 512, 256]
   fft_overlap: 0.75
-  inharmonicity_weight: 10.0
-  reverb_weight: 0.01
+  inharmonicity_weight: 0.0
+  reverb_weight: 0.0
   reverb_loss_type: L1
   checkpoint_dir: checkpoints/maestro_v2
   log_dir: runs/maestro_v2

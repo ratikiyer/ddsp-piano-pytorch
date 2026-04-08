@@ -69,6 +69,14 @@ def test_fft_convolve_parity() -> None:
     assert torch.allclose(got, exp, atol=1e-6, rtol=1e-5)
 
 
+def test_fft_convolve_mismatched_lengths() -> None:
+    signal = torch.rand(2, 24000)
+    kernel = torch.rand(2, 8000)
+    out = core.fft_convolve(signal, kernel)
+    assert out.shape == signal.shape
+    assert torch.isfinite(out).all()
+
+
 def test_midi_hz_roundtrip() -> None:
     midi = torch.linspace(21, 108, 64)
     hz = core.midi_to_hz(midi)

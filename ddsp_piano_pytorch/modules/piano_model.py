@@ -14,6 +14,7 @@ from ddsp_piano_pytorch.modules.sub_modules import (
     Detuner,
     FiLMContextNetwork,
     InharmonicityNetwork,
+    JointParametricInharmTuning,
     MonophonicDeepNetwork,
     MultiInstrumentFeedbackDelayReverb,
     NoteRelease,
@@ -130,41 +131,37 @@ class PianoModel(nn.Module):
             "context": context,
             "global_inharm": global_inharm,
             "global_detuning": global_detuning,
+            "piano_model": piano_model,
         }
         features = self.parallelizer(features, parallelize=True)
 
         par_cond = features["conditioning"]
         par_context = features["context"]
+        par_piano_model = features["piano_model"]
         extended_pitch = self.note_release(par_cond.reshape(b, t, self.n_synths, 2)).reshape(b * self.n_synths, t, 1)
-        inharm_coef = self.inharm_model(extended_pitch, features.get("global_inharm"))
-        f0_hz = self.detuner(extended_pitch, features.get("global_detuning"))
+        if isinstance(self.inharm_model, JointParametricInharmTuning):
+            f0_hz, inharm_coef = self.inharm_model(extended_pitch, par_piano_model)
+        else:
+            inharm_coef = self.inharm_model(extended_pitch, features.get("global_inharm"))
+            f0_hz = self.detuner(extended_pitch, features.get("global_detuning"))
         mono_out = self.monophonic_network(par_cond, extended_pitch, par_context)
 
         features.update(mono_out)
         features["inharm_coef"] = inharm_coef
         features["f0_hz"] = f0_hz
-        features = self.parallelizer(features, parallelize=False)
 
-        # Sum monophonic signals on batch axis before global reverb.
-        harmonic_sum = None
-        noise_sum = None
-        for i in range(self.n_synths):
-            local = {
-                "amplitudes": features[f"amplitudes_{i}"],
-                "harmonic_distribution": features[f"harmonic_distribution_{i}"],
-                "inharm_coef": features["inharm_coef"][i],
-                "f0_hz": features["f0_hz"][i],
-                "noise_magnitudes": features[f"noise_magnitudes_{i}"],
-                "background_audio": self.noise(background_noise),
-            }
-            proc = self.processor_group(local, return_outputs_dict=True)["controls"]
-            h = proc["harmonic_audio"]
-            n = proc["noise_audio"]
-            harmonic_sum = h if harmonic_sum is None else harmonic_sum + h
-            noise_sum = n if noise_sum is None else noise_sum + n
+        harmonic_audio = self.inharmonic(
+            features["amplitudes"],
+            features["harmonic_distribution"],
+            features["inharm_coef"],
+            features["f0_hz"],
+        )
+        noise_audio = self.noise(features["noise_magnitudes"])
+        background_audio = self.noise(background_noise)
 
-        dry = harmonic_sum + noise_sum
-        wet = torch.stack([self.reverb_model.reverb_model(dry[i : i + 1], reverb_ir[i : i + 1]).squeeze(0) for i in range(b)], dim=0)
+        dry_parallel = harmonic_audio + noise_audio
+        dry = dry_parallel.reshape(self.n_synths, b, -1).sum(dim=0) + background_audio
+        wet = self.reverb_model.reverb_model(dry, reverb_ir)
         return {
             "audio": wet,
             "audio_dry": dry,

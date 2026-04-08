@@ -179,20 +179,15 @@ class MultiInstrumentFeedbackDelayReverb(nn.Module):
         t0 = F.relu(self.time_rev_0_sec(piano_model))
         alpha = torch.sigmoid(self.alpha_tone(piano_model))
         early = self.early_ir(piano_model)
-        irs = []
-        for i in range(piano_model.shape[0]):
-            irs.append(
-                self.reverb_model.get_ir(
-                    input_gain=in_gain[i],
-                    output_gain=out_gain[i],
-                    gain_allpass=g_ap[i],
-                    delays_allpass=d_ap[i],
-                    time_rev_0_sec=t0[i, 0],
-                    alpha_tone=alpha[i, 0],
-                    early_ir=early[i],
-                )
-            )
-        return torch.stack(irs, dim=0)
+        return self.reverb_model.get_ir(
+            input_gain=in_gain,
+            output_gain=out_gain,
+            gain_allpass=g_ap,
+            delays_allpass=d_ap,
+            time_rev_0_sec=t0,
+            alpha_tone=alpha,
+            early_ir=early,
+        )
 
 
 class MonophonicNetwork(nn.Module):
@@ -247,7 +242,7 @@ class Parallelizer(nn.Module):
     def __init__(
         self,
         n_synths: int = 16,
-        global_keys: tuple[str, ...] = ("conditioning", "context", "global_inharm", "global_detuning"),
+        global_keys: tuple[str, ...] = ("conditioning", "context", "global_inharm", "global_detuning", "piano_model"),
         mono_keys: tuple[str, ...] = ("f0_hz", "inharm_coef", "amplitudes", "harmonic_distribution", "noise_magnitudes"),
     ) -> None:
         super().__init__()
@@ -257,7 +252,9 @@ class Parallelizer(nn.Module):
         self.batch_size: int | None = None
 
     def _put_polyphony_first(self, x: torch.Tensor) -> torch.Tensor:
-        if x.dim() in (2, 3):
+        if x.dim() == 1:
+            x = x.unsqueeze(0).expand(self.n_synths, -1)
+        elif x.dim() in (2, 3):
             x = x.unsqueeze(0).expand(self.n_synths, *x.shape)
         elif x.dim() == 4:
             x = x.permute(2, 0, 1, 3)
@@ -342,22 +339,73 @@ class ParametricTuning(InharmonicityNetwork):
 
 
 class JointParametricInharmTuning(nn.Module):
-    """Frozen per-instrument parameters for joint inharmonicity+tuning."""
+    """Joint per-instrument inharmonicity+tuning model from TF implementation."""
 
-    def __init__(self, n_instruments: int = 10) -> None:
+    def __init__(self, n_instruments: int = 10, pretrained_weights: dict[str, list[list[float]]] | None = None) -> None:
         super().__init__()
-        self.inharm_embed = nn.Embedding(n_instruments, 2)
-        self.detune_embed = nn.Embedding(n_instruments, 2)
+        self.n_instruments = n_instruments
+        self.alpha_b = nn.Embedding(n_instruments, 1)
+        self.beta_b = nn.Embedding(n_instruments, 1)
+        self.alpha_t = nn.Embedding(n_instruments, 1)
+        self.beta_t = nn.Embedding(n_instruments, 1)
+        self.pitch_ref = nn.Embedding(n_instruments, 1)
+        self.k_param = nn.Embedding(n_instruments, 1)
+        self.alpha = nn.Embedding(n_instruments, 1)
+
         with torch.no_grad():
-            self.inharm_embed.weight.fill_(0.0)
-            self.detune_embed.weight.fill_(0.0)
-        self.inharm_embed.weight.requires_grad_(False)
-        self.detune_embed.weight.requires_grad_(False)
-        self.base = ParametricTuning()
+            for emb in (self.alpha_b, self.beta_b, self.alpha_t, self.beta_t, self.pitch_ref, self.k_param, self.alpha):
+                emb.weight.zero_()
+
+            if pretrained_weights is not None:
+                self.alpha_b.weight.copy_(torch.tensor(pretrained_weights["alpha_b"], dtype=self.alpha_b.weight.dtype))
+                self.beta_b.weight.copy_(torch.tensor(pretrained_weights["beta_b"], dtype=self.beta_b.weight.dtype))
+                self.alpha_t.weight.copy_(torch.tensor(pretrained_weights["alpha_t"], dtype=self.alpha_t.weight.dtype))
+                self.beta_t.weight.copy_(torch.tensor(pretrained_weights["beta_t"], dtype=self.beta_t.weight.dtype))
+                self.pitch_ref.weight.copy_(torch.tensor(pretrained_weights["pitch_ref"], dtype=self.pitch_ref.weight.dtype))
+                self.k_param.weight.copy_(torch.tensor(pretrained_weights["K"], dtype=self.k_param.weight.dtype))
+                self.alpha.weight.copy_(torch.tensor(pretrained_weights["alpha"], dtype=self.alpha.weight.dtype))
+
+        if pretrained_weights is not None:
+            for emb in (self.alpha_b, self.beta_b, self.alpha_t, self.beta_t, self.pitch_ref, self.k_param, self.alpha):
+                emb.weight.requires_grad_(False)
+
+    @staticmethod
+    def reverse_scaled_tanh(x: torch.Tensor) -> torch.Tensor:
+        return (1.0 - torch.tanh(x)) / 2.0
+
+    @staticmethod
+    def _piano_index(piano_model: torch.Tensor) -> torch.Tensor:
+        if piano_model.dim() > 1:
+            piano_model = piano_model[..., 0]
+        return piano_model.long()
+
+    def _embed(self, emb: nn.Embedding, piano_model: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        val = emb(self._piano_index(piano_model))
+        return val.unsqueeze(1).to(device=target.device, dtype=target.dtype)
+
+    def get_inharm(self, extended_pitch: torch.Tensor, piano_model: torch.Tensor) -> torch.Tensor:
+        bass_asymptote = self._embed(self.alpha_b, piano_model, extended_pitch) * extended_pitch + self._embed(
+            self.beta_b, piano_model, extended_pitch
+        )
+        treble_asymptote = self._embed(self.alpha_t, piano_model, extended_pitch) * extended_pitch + self._embed(
+            self.beta_t, piano_model, extended_pitch
+        )
+        return torch.exp(bass_asymptote) + torch.exp(treble_asymptote)
+
+    def get_deviation_from_et(self, extended_pitch: torch.Tensor, piano_model: torch.Tensor) -> torch.Tensor:
+        reference_pitch = self._embed(self.pitch_ref, piano_model, extended_pitch)
+        ratio = midi_to_hz(extended_pitch) / torch.clamp(midi_to_hz(reference_pitch), min=1e-7)
+        rho = 1.0 + self._embed(self.k_param, piano_model, extended_pitch) * self.reverse_scaled_tanh(
+            (extended_pitch - reference_pitch) / torch.clamp(self._embed(self.alpha, piano_model, extended_pitch), min=1e-7)
+        )
+        num = 1.0 + self.get_inharm(reference_pitch, piano_model) * (ratio * rho).pow(2)
+        den = 1.0 + self.get_inharm(extended_pitch, piano_model) * rho.pow(2)
+        return torch.sqrt(torch.clamp(num / torch.clamp(den, min=1e-7), min=1e-7))
 
     def forward(self, extended_pitch: torch.Tensor, piano_model: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # Frozen parameters are prepared for TF-weight import; base model handles formula.
-        return self.base(extended_pitch, global_inharm=None)
+        inharm_coef = self.get_inharm(extended_pitch, piano_model)
+        detuning = self.get_deviation_from_et(extended_pitch, piano_model)
+        return midi_to_hz(extended_pitch) * detuning, inharm_coef
 
 
 class Detuner(nn.Module):
@@ -418,12 +466,13 @@ class F0ProcessorCell(nn.Module):
         self.frame_rate = frame_rate
 
     @staticmethod
-    def saturated_relu(x: torch.Tensor, threshold: float = 0.0) -> torch.Tensor:
+    def saturated_relu(x: torch.Tensor, threshold: torch.Tensor | float = 0.0) -> torch.Tensor:
         return torch.clamp(torch.relu(x - threshold), max=1.0)
 
     def step(self, midi_note: torch.Tensor, prev_note: torch.Tensor, prev_steps: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         note_activity = self.saturated_relu(midi_note, 0.0)
-        release_end = self.saturated_relu(prev_steps, float(self.release_duration.detach().item()) * self.frame_rate)
+        threshold = self.release_duration.to(device=prev_steps.device, dtype=prev_steps.dtype) * float(self.frame_rate)
+        release_end = self.saturated_relu(prev_steps, threshold)
         out_note = note_activity * midi_note + (1.0 - note_activity) * prev_note * (1.0 - release_end)
         steps = (prev_steps + 1.0) * (1.0 - note_activity) * (1.0 - release_end)
         return out_note, out_note, steps

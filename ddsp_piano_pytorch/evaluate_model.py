@@ -10,6 +10,7 @@ from ddsp_piano_pytorch.config import load_yaml_config
 from ddsp_piano_pytorch.data_pipeline import build_dataloader, build_manifest_from_maestro_csv
 from ddsp_piano_pytorch.modules.losses import SpectralLoss, SpectralLossConfig
 from ddsp_piano_pytorch.modules.piano_model import PianoModel
+from ddsp_piano_pytorch.train import build_model_from_config
 from ddsp_piano_pytorch.utils.io_utils import save_audio
 
 
@@ -26,15 +27,7 @@ def process_args() -> argparse.Namespace:
 
 
 def _build_model(cfg: dict, ckpt_path: str, device: torch.device) -> PianoModel:
-    m = cfg["model"]
-    model = PianoModel(
-        n_synths=m["n_synths"],
-        n_harmonics=m["n_harmonics"],
-        n_noise_bands=m["n_noise_bands"],
-        sample_rate=m["sample_rate"],
-        frame_rate=m["frame_rate"],
-        context_dim=m.get("context_dim", 128),
-    ).to(device)
+    model = build_model_from_config(cfg).to(device)
     ckpt = torch.load(ckpt_path, map_location=device)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     model.load_state_dict(state, strict=False)

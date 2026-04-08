@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ddsp_piano_pytorch.data_pipeline import preprocess_data_into_tfrecord
+from ddsp_piano_pytorch.data_pipeline import preprocess_data_into_manifest
 
 
 def process_args() -> argparse.Namespace:
@@ -19,16 +19,16 @@ def process_args() -> argparse.Namespace:
 def main(args: argparse.Namespace) -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    preprocess_data_into_tfrecord(
-        out_dir / "maestro_validation.tfrecord",
+    preprocess_data_into_manifest(
+        out_dir / "maestro_validation.csv",
         dataset_dir=args.maestro_dir,
         split="validation",
         sample_rate=args.sample_rate,
         frame_rate=args.frame_rate,
         max_polyphony=args.polyphony,
     )
-    preprocess_data_into_tfrecord(
-        out_dir / "maestro_train.tfrecord",
+    preprocess_data_into_manifest(
+        out_dir / "maestro_train.csv",
         dataset_dir=args.maestro_dir,
         split="train",
         sample_rate=args.sample_rate,

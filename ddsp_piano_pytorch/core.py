@@ -184,7 +184,12 @@ def get_fft_size(frame_size: int, ir_size: int, power_of_2: bool = True) -> int:
 
 
 def frequency_filter(audio: torch.Tensor, magnitudes: torch.Tensor, window_size: int | None = None) -> torch.Tensor:
-    """Applies an FIR-like frequency-domain filter over frame windows."""
+    """Applies a framewise STFT-domain filtering approximation.
+
+    Note: TF DDSP builds explicit FIR impulse responses per frame before
+    convolution. This implementation uses STFT-domain multiplication for
+    efficiency in PyTorch and is validated with numeric tolerances.
+    """
     batch, n_samples = audio.shape
     _, n_frames, n_bins = magnitudes.shape
     if window_size is None:

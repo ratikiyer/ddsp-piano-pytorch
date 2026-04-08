@@ -168,9 +168,11 @@ def get_dummy_data(
 ) -> dict[str, torch.Tensor]:
     n_frames = int(duration * frame_rate)
     n_samples = int(duration * sample_rate)
+    pedals = torch.rand(batch_size, n_frames, 4)
     return {
         "conditioning": torch.rand(batch_size, n_frames, n_synths, 2),
-        "pedals": torch.rand(batch_size, n_frames, 4),
+        "pedals": pedals,
+        "pedal": pedals,
         "audio": torch.rand(batch_size, n_samples),
         "piano_model": torch.randint(0, 10, (batch_size,), dtype=torch.long),
         "onsets": torch.zeros(batch_size, n_frames, n_synths),
@@ -193,16 +195,29 @@ def get_test_dataset(*args, **kwargs) -> DataLoader:
     return build_dataloader(*args, **kwargs)
 
 
+def preprocess_data_into_manifest(
+    filename: str | Path,
+    dataset_dir: str | Path,
+    split: str = "train",
+    **kwargs,
+) -> None:
+    """Precompute a CSV/JSON manifest from MAESTRO metadata."""
+    _ = kwargs
+    build_manifest_from_maestro_csv(dataset_dir, split=split, out_manifest=filename)
+
+
 def preprocess_data_into_tfrecord(
     filename: str | Path,
     dataset_dir: str | Path,
     split: str = "train",
     **kwargs,
 ) -> None:
-    """Compatibility wrapper for TF script naming.
+    """Backward-compatible alias for TF naming.
 
-    We intentionally keep the function name used by the TF codebase, but the
-    PyTorch pipeline stores a manifest file (CSV/JSON) instead of TFRecord.
+    The PyTorch pipeline stores manifest files, not TFRecord datasets. If a
+    `.tfrecord` path is provided, we replace the suffix with `.csv`.
     """
-    _ = kwargs
-    build_manifest_from_maestro_csv(dataset_dir, split=split, out_manifest=filename)
+    out_path = Path(filename)
+    if out_path.suffix == ".tfrecord":
+        out_path = out_path.with_suffix(".csv")
+    preprocess_data_into_manifest(out_path, dataset_dir=dataset_dir, split=split, **kwargs)

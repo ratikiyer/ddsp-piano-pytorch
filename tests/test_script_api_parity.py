@@ -92,8 +92,9 @@ def test_preprocess_manifest_generation_compat(tmp_path: Path) -> None:
 
     out_manifest = tmp_path / "maestro_train.tfrecord"
     data_pipeline.preprocess_data_into_tfrecord(out_manifest, dataset_dir=maestro_dir, split="train")
-    assert out_manifest.exists()
-    content = out_manifest.read_text(encoding="utf-8")
+    csv_manifest = out_manifest.with_suffix(".csv")
+    assert csv_manifest.exists()
+    content = csv_manifest.read_text(encoding="utf-8")
     assert "audio_path" in content
 
 

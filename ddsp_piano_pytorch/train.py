@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 from itertools import cycle
@@ -14,10 +15,90 @@ from ddsp_piano_pytorch.config import load_yaml_config
 from ddsp_piano_pytorch.data_pipeline import build_dataloader, build_manifest_from_maestro_csv
 from ddsp_piano_pytorch.modules.losses import InharmonicityLoss, ReverbRegularizer, SpectralLoss, SpectralLossConfig
 from ddsp_piano_pytorch.modules.piano_model import PianoModel
+from ddsp_piano_pytorch.modules.sub_modules import (
+    BackgroundNoiseFilter,
+    DeepDetuner,
+    Detuner,
+    DictDetuner,
+    FiLMContextNetwork,
+    InharmonicityNetwork,
+    JointParametricInharmTuning,
+    MonophonicDeepNetwork,
+    MonophonicNetwork,
+    MultiInstrumentFeedbackDelayReverb,
+    NoteRelease,
+    OneHotZEncoder,
+    Parallelizer,
+    SimpleContextNet,
+)
+
+
+_CLASS_REGISTRY = {
+    "OneHotZEncoder": OneHotZEncoder,
+    "NoteRelease": NoteRelease,
+    "FiLMContextNetwork": FiLMContextNetwork,
+    "SimpleContextNet": SimpleContextNet,
+    "Parallelizer": Parallelizer,
+    "MonophonicNetwork": MonophonicNetwork,
+    "MonophonicDeepNetwork": MonophonicDeepNetwork,
+    "InharmonicityNetwork": InharmonicityNetwork,
+    "JointParametricInharmTuning": JointParametricInharmTuning,
+    "Detuner": Detuner,
+    "DictDetuner": DictDetuner,
+    "DeepDetuner": DeepDetuner,
+    "BackgroundNoiseFilter": BackgroundNoiseFilter,
+    "MultiInstrumentFeedbackDelayReverb": MultiInstrumentFeedbackDelayReverb,
+}
+
+
+def _build_component(spec: dict | None, fallback: dict | None = None):
+    if not spec:
+        return None
+    class_name = spec.get("class")
+    if class_name not in _CLASS_REGISTRY:
+        raise ValueError(f"Unknown model component class: {class_name}")
+    kwargs = dict(fallback or {})
+    kwargs.update({k: v for k, v in spec.items() if k != "class"})
+    cls = _CLASS_REGISTRY[class_name]
+    valid = set(inspect.signature(cls.__init__).parameters.keys()) - {"self"}
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid}
+    return cls(**filtered_kwargs)
 
 
 def build_model_from_config(cfg: dict) -> PianoModel:
     m = cfg["model"]
+    mono_output_splits = (
+        ("amplitudes", 1),
+        ("harmonic_distribution", m["n_harmonics"]),
+        ("noise_magnitudes", m["n_noise_bands"]),
+    )
+
+    z_encoder = _build_component(m.get("z_encoder"), fallback={"frame_rate": m["frame_rate"]})
+    note_release = _build_component(m.get("note_release"), fallback={"frame_rate": m["frame_rate"]})
+    context_network = _build_component(
+        m.get("context_network"),
+        fallback={
+            "n_synths": m["n_synths"],
+            "context_dim": m.get("context_dim", 128),
+            "n_instruments": m.get("n_instruments", 10),
+        },
+    )
+    parallelizer = _build_component(m.get("parallelizer"), fallback={"n_synths": m["n_synths"]})
+    mono_spec = m.get("monophonic_network")
+    mono_fallback = {"output_splits": mono_output_splits}
+    if mono_spec and mono_spec.get("class") == "MonophonicDeepNetwork":
+        mono_fallback["context_dim"] = m.get("context_dim", 128)
+    elif mono_spec and mono_spec.get("class") == "MonophonicNetwork":
+        mono_fallback["input_dim"] = m.get("context_dim", 128) + 3
+    monophonic_network = _build_component(mono_spec, fallback=mono_fallback)
+    inharm_model = _build_component(m.get("inharm_model"))
+    detuner = _build_component(m.get("detuner"))
+    background_noise_model = _build_component(
+        m.get("background_noise_model"),
+        fallback={"n_filters": m["n_noise_bands"], "frame_rate": m["frame_rate"]},
+    )
+    reverb_model = _build_component(m.get("reverb_model"), fallback={"sample_rate": m["sample_rate"]})
+
     return PianoModel(
         n_synths=m["n_synths"],
         n_harmonics=m["n_harmonics"],
@@ -25,6 +106,15 @@ def build_model_from_config(cfg: dict) -> PianoModel:
         sample_rate=m["sample_rate"],
         frame_rate=m["frame_rate"],
         context_dim=m.get("context_dim", 128),
+        z_encoder=z_encoder,
+        note_release=note_release,
+        context_network=context_network,
+        parallelizer=parallelizer,
+        monophonic_network=monophonic_network,
+        inharm_model=inharm_model,
+        detuner=detuner,
+        background_noise_model=background_noise_model,
+        reverb_model=reverb_model,
     )
 
 

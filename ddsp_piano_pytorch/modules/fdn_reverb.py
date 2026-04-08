@@ -25,7 +25,8 @@ class FeedbackDelayNetwork(nn.Module):
         self.register_buffer("delay_values", torch.tensor(delay_values, dtype=torch.float32), persistent=False)
 
         eye = torch.eye(delay_lines, dtype=torch.float32)
-        self.register_buffer("mixing_matrix", -eye + (2.0 / delay_lines) * torch.ones_like(eye), persistent=False)
+        # Match TF reference implementation: -I + 0.5 * 11^T.
+        self.register_buffer("mixing_matrix", -eye + 0.5 * torch.ones_like(eye), persistent=False)
 
     def _late_ir(
         self,
@@ -83,8 +84,29 @@ class FeedbackDelayNetwork(nn.Module):
         time_rev_0_sec: torch.Tensor,
         alpha_tone: torch.Tensor,
         early_ir: torch.Tensor,
-        n_fft: int = 32768,
+        n_fft: int | None = None,
     ) -> torch.Tensor:
+        if n_fft is None:
+            n_fft = int(2 * self.sampling_rate)
+
+        if input_gain.dim() == 2:
+            batch = input_gain.shape[0]
+            irs = []
+            for i in range(batch):
+                irs.append(
+                    self.get_ir(
+                        input_gain=input_gain[i],
+                        output_gain=output_gain[i],
+                        gain_allpass=gain_allpass[i],
+                        delays_allpass=delays_allpass[i],
+                        time_rev_0_sec=time_rev_0_sec[i],
+                        alpha_tone=alpha_tone[i],
+                        early_ir=early_ir[i],
+                        n_fft=n_fft,
+                    )
+                )
+            return torch.stack(irs, dim=0)
+
         late = self._late_ir(input_gain, output_gain, gain_allpass, delays_allpass, time_rev_0_sec, alpha_tone, n_fft=n_fft)
         early = early_ir.reshape(-1)
         if early.shape[0] < late.shape[0]:

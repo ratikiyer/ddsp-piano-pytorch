@@ -1,0 +1,24 @@
+model:
+  n_instruments: 10
+  n_synths: 16
+  n_harmonics: 96
+  n_noise_bands: 65
+  sample_rate: 16000
+  frame_rate: 250
+  context_dim: 64
+  z_encoder: { class: OneHotZEncoder, n_instruments: 10, z_dim: 16 }
+  note_release: { class: NoteRelease, frame_rate: 250 }
+  parallelizer: { class: Parallelizer, n_synths: 16 }
+  context_network: { class: FiLMContextNetwork, n_instruments: 10, layer_dim: 64, context_dim: 64 }
+  inharm_model: { class: InharmonicityNetwork }
+  detuner: { class: DeepDetuner, hidden_dim: 64 }
+  reverb_model: { class: MultiInstrumentFeedbackDelayReverb, n_instruments: 10, sample_rate: 16000, fdn_n_delays: 8, early_ir_length: 200 }
+  monophonic_network: { class: MonophonicDeepNetwork, rnn_channels: 192, ch: 64 }
+  background_noise_model: { class: BackgroundNoiseFilter, n_instruments: 10, n_filters: 65, frame_rate: 250 }
+training:
+  batch_size: 4
+  learning_rate: 3.0e-4
+  duration: 3.0
+  epochs: 10
+  phase1_epochs: 5
+  phase2_epochs: 5
